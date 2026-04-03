@@ -33,7 +33,7 @@ export function MessageList({
   className,
   threadId,
   thread,
-  paddingBottom = 160,
+  paddingBottom = 256,
 }: {
   className?: string;
   threadId: string;
