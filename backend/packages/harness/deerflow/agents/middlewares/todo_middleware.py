@@ -68,7 +68,7 @@ class TodoMiddleware(TodoListMiddleware):
     def before_model(
         self,
         state: PlanningState,
-        runtime: Runtime,  # noqa: ARG002
+        runtime: Runtime,
     ) -> dict[str, Any] | None:
         """Inject a todo-list reminder when write_todos has left the context window."""
         todos: list[Todo] = state.get("todos") or []  # type: ignore[assignment]
@@ -168,6 +168,7 @@ class TodoMiddleware(TodoListMiddleware):
         )
         return {"jump_to": "model", "messages": [reminder]}
 
+    @override
     @hook_config(can_jump_to=["model"])
     async def aafter_model(
         self,
