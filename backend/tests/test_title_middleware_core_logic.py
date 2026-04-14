@@ -215,9 +215,7 @@ class TestTitleMiddlewareCoreLogic:
         _set_test_title_config(max_chars=50)
         middleware = TitleMiddleware()
         model = MagicMock()
-        model.ainvoke = AsyncMock(
-            return_value=AIMessage(content="<think>用户想研究贵阳。</think>贵阳发展研究")
-        )
+        model.ainvoke = AsyncMock(return_value=AIMessage(content="<think>用户想研究贵阳。</think>贵阳发展研究"))
         monkeypatch.setattr(title_middleware_module, "create_chat_model", MagicMock(return_value=model))
 
         state = {
