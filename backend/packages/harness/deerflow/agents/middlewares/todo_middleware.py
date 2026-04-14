@@ -119,7 +119,7 @@ class TodoMiddleware(TodoListMiddleware):
     def after_model(
         self,
         state: PlanningState,
-        runtime: Runtime,  # noqa: ARG002
+        runtime: Runtime,
     ) -> dict[str, Any] | None:
         """Prevent premature agent exit when todo items are still incomplete.
 
