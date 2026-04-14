@@ -300,4 +300,3 @@ class TestAafterModel:
         assert result is not None
         assert result["jump_to"] == "model"
         assert result["messages"][0].name == "todo_completion_reminder"
-
