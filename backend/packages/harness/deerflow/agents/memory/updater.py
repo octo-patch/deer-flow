@@ -1,12 +1,11 @@
 """Memory updater for reading, writing, and updating memory data."""
 
 import asyncio
-import atexit
-import concurrent.futures
 import json
 import logging
 import math
 import re
+import threading
 import uuid
 from collections.abc import Awaitable
 from typing import Any
@@ -25,11 +24,34 @@ from deerflow.models import create_chat_model
 
 logger = logging.getLogger(__name__)
 
-_SYNC_MEMORY_UPDATER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
-    max_workers=4,
-    thread_name_prefix="memory-updater-sync",
-)
-atexit.register(lambda: _SYNC_MEMORY_UPDATER_EXECUTOR.shutdown(wait=False))
+# Persistent event loop for memory updates.
+#
+# Using asyncio.run() for each update creates a temporary event loop that is
+# closed on completion.  Closing the loop also closes any async resources
+# (e.g. httpx.AsyncClient instances inside ChatOpenAI) that were initialized
+# on it.  If those clients are cached and reused by the main ASGI event loop,
+# subsequent requests raise "RuntimeError: Event loop is closed".
+#
+# A single persistent loop that is never closed avoids this problem entirely:
+# async resources created on it remain open across updates.
+_MEMORY_UPDATE_LOOP: asyncio.AbstractEventLoop | None = None
+_MEMORY_UPDATE_LOOP_LOCK = threading.Lock()
+
+
+def _get_memory_update_loop() -> asyncio.AbstractEventLoop:
+    """Return the process-wide persistent event loop used for memory updates."""
+    global _MEMORY_UPDATE_LOOP
+    with _MEMORY_UPDATE_LOOP_LOCK:
+        if _MEMORY_UPDATE_LOOP is None or _MEMORY_UPDATE_LOOP.is_closed():
+            loop = asyncio.new_event_loop()
+            thread = threading.Thread(
+                target=loop.run_forever,
+                name="memory-update-loop",
+                daemon=True,
+            )
+            thread.start()
+            _MEMORY_UPDATE_LOOP = loop
+        return _MEMORY_UPDATE_LOOP
 
 
 def _create_empty_memory() -> dict[str, Any]:
@@ -217,34 +239,18 @@ def _extract_text(content: Any) -> str:
 
 
 def _run_async_update_sync(coro: Awaitable[bool]) -> bool:
-    """Run an async memory update from sync code, including nested-loop contexts."""
-    handed_off = False
+    """Run an async memory update from sync code via the persistent memory loop.
 
+    Submits the coroutine to the persistent background event loop and blocks
+    until it completes.  Using a persistent loop (instead of asyncio.run)
+    prevents "RuntimeError: Event loop is closed" errors that occur when
+    asyncio.run() closes its temporary loop and inadvertently closes async
+    resources (e.g. httpx clients) that are shared with the main ASGI loop.
+    """
     try:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop is not None and loop.is_running():
-            future = _SYNC_MEMORY_UPDATER_EXECUTOR.submit(asyncio.run, coro)
-            handed_off = True
-            return future.result()
-
-        handed_off = True
-        return asyncio.run(coro)
+        future = asyncio.run_coroutine_threadsafe(coro, _get_memory_update_loop())
+        return future.result()
     except Exception:
-        if not handed_off:
-            close = getattr(coro, "close", None)
-            if callable(close):
-                try:
-                    close()
-                except Exception:
-                    logger.debug(
-                        "Failed to close un-awaited memory update coroutine",
-                        exc_info=True,
-                    )
-
         logger.exception("Failed to run async memory update from sync context")
         return False
 

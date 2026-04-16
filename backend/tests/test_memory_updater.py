@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -7,6 +8,7 @@ from deerflow.agents.memory.prompt import format_conversation_for_update
 from deerflow.agents.memory.updater import (
     MemoryUpdater,
     _extract_text,
+    _get_memory_update_loop,
     _run_async_update_sync,
     clear_memory_data,
     create_memory_fact,
@@ -676,13 +678,13 @@ class TestUpdateMemoryStructuredResponse:
         assert result is True
         model.ainvoke.assert_awaited_once()
 
-    def test_sync_update_memory_returns_false_when_bridge_submit_fails(self):
+    def test_sync_update_memory_returns_false_when_bridge_fails(self):
         updater = MemoryUpdater()
 
         with (
             patch(
-                "deerflow.agents.memory.updater._SYNC_MEMORY_UPDATER_EXECUTOR.submit",
-                side_effect=RuntimeError("executor down"),
+                "deerflow.agents.memory.updater._get_memory_update_loop",
+                side_effect=RuntimeError("loop unavailable"),
             ),
         ):
             msg = MagicMock()
@@ -702,32 +704,69 @@ class TestUpdateMemoryStructuredResponse:
 
 
 class TestRunAsyncUpdateSync:
-    def test_closes_unawaited_awaitable_when_bridge_fails_before_handoff(self):
-        class CloseableAwaitable:
-            def __init__(self):
-                self.closed = False
-
-            def __await__(self):
-                pytest.fail("awaitable should not have been awaited")
-                yield
-
-            def close(self):
-                self.closed = True
-
-        awaitable = CloseableAwaitable()
+    def test_returns_false_when_loop_is_unavailable(self):
+        async def failing_coro() -> bool:
+            return True
 
         with patch(
-            "deerflow.agents.memory.updater._SYNC_MEMORY_UPDATER_EXECUTOR.submit",
-            side_effect=RuntimeError("executor down"),
+            "deerflow.agents.memory.updater._get_memory_update_loop",
+            side_effect=RuntimeError("loop unavailable"),
         ):
-
-            async def run_in_loop():
-                return _run_async_update_sync(awaitable)
-
-            result = asyncio.run(run_in_loop())
+            result = _run_async_update_sync(failing_coro())
 
         assert result is False
-        assert awaitable.closed is True
+
+    def test_runs_coroutine_on_persistent_loop(self):
+        """Verify that coroutines are executed on the persistent memory loop."""
+        loop = _get_memory_update_loop()
+
+        captured = {}
+
+        async def probe() -> bool:
+            captured["loop"] = asyncio.get_event_loop()
+            return True
+
+        result = _run_async_update_sync(probe())
+
+        assert result is True
+        assert captured["loop"] is loop
+
+    def test_persistent_loop_not_closed_after_update(self):
+        """Regression: the persistent loop must remain open after an update so that
+        async resources (e.g. httpx clients) created on it are not prematurely closed,
+        which previously caused 'RuntimeError: Event loop is closed' in the ASGI loop.
+        """
+
+        async def no_op() -> bool:
+            return True
+
+        _run_async_update_sync(no_op())
+
+        loop = _get_memory_update_loop()
+        assert not loop.is_closed(), "memory update loop must not be closed after a sync update"
+
+    def test_update_survives_after_prior_asyncio_run_closes_a_loop(self):
+        """Regression: a memory update triggered after asyncio.run() closes a temporary
+        loop should still succeed.  This is the scenario from GitHub issue #2302 where
+        calling asyncio.run() in a background thread closed shared httpx clients, breaking
+        subsequent requests on the main ASGI event loop.
+        """
+
+        async def dummy() -> bool:
+            return True
+
+        # Simulate a prior asyncio.run() that creates and then closes a temporary loop.
+        asyncio.run(dummy())
+
+        # The persistent memory loop must be unaffected — updates should still work.
+        async def real_update() -> bool:
+            return True
+
+        result = _run_async_update_sync(real_update())
+        assert result is True
+
+        loop = _get_memory_update_loop()
+        assert not loop.is_closed()
 
 
 class TestFactDeduplicationCaseInsensitive:
