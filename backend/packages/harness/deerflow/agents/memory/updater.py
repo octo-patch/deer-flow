@@ -36,22 +36,54 @@ logger = logging.getLogger(__name__)
 # A single persistent loop that is never closed avoids this problem entirely:
 # async resources created on it remain open across updates.
 _MEMORY_UPDATE_LOOP: asyncio.AbstractEventLoop | None = None
+_MEMORY_UPDATE_LOOP_THREAD: threading.Thread | None = None
+_MEMORY_UPDATE_LOOP_STARTED: threading.Event | None = None
 _MEMORY_UPDATE_LOOP_LOCK = threading.Lock()
+
+
+def _run_memory_update_loop(
+    loop: asyncio.AbstractEventLoop,
+    started_event: threading.Event,
+) -> None:
+    """Run the persistent memory-update event loop in its dedicated thread."""
+    asyncio.set_event_loop(loop)
+    loop.call_soon(started_event.set)
+    try:
+        loop.run_forever()
+    finally:
+        started_event.clear()
 
 
 def _get_memory_update_loop() -> asyncio.AbstractEventLoop:
     """Return the process-wide persistent event loop used for memory updates."""
-    global _MEMORY_UPDATE_LOOP
+    global _MEMORY_UPDATE_LOOP, _MEMORY_UPDATE_LOOP_STARTED, _MEMORY_UPDATE_LOOP_THREAD
     with _MEMORY_UPDATE_LOOP_LOCK:
-        if _MEMORY_UPDATE_LOOP is None or _MEMORY_UPDATE_LOOP.is_closed():
+        thread_is_alive = (
+            _MEMORY_UPDATE_LOOP_THREAD is not None and _MEMORY_UPDATE_LOOP_THREAD.is_alive()
+        )
+        loop_is_usable = (
+            _MEMORY_UPDATE_LOOP is not None
+            and not _MEMORY_UPDATE_LOOP.is_closed()
+            and _MEMORY_UPDATE_LOOP.is_running()
+            and thread_is_alive
+        )
+
+        if not loop_is_usable:
             loop = asyncio.new_event_loop()
+            started_event = threading.Event()
             thread = threading.Thread(
-                target=loop.run_forever,
+                target=_run_memory_update_loop,
+                args=(loop, started_event),
                 name="memory-update-loop",
                 daemon=True,
             )
             thread.start()
+            if not started_event.wait(timeout=5):
+                raise RuntimeError("Timed out starting memory update event loop")
             _MEMORY_UPDATE_LOOP = loop
+            _MEMORY_UPDATE_LOOP_THREAD = thread
+            _MEMORY_UPDATE_LOOP_STARTED = started_event
+
         return _MEMORY_UPDATE_LOOP
 
 
@@ -248,10 +280,15 @@ def _run_async_update_sync(coro: Awaitable[bool]) -> bool:
     asyncio.run() closes its temporary loop and inadvertently closes async
     resources (e.g. httpx clients) that are shared with the main ASGI loop.
     """
+    future: asyncio.Future[bool] | None = None
     try:
         future = asyncio.run_coroutine_threadsafe(coro, _get_memory_update_loop())
         return future.result()
     except Exception:
+        if future is None:
+            close = getattr(coro, "close", None)
+            if callable(close):
+                close()
         logger.exception("Failed to run async memory update from sync context")
         return False
 
