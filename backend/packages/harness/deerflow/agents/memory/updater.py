@@ -283,7 +283,7 @@ def _run_async_update_sync(coro: Awaitable[bool]) -> bool:
     future: asyncio.Future[bool] | None = None
     try:
         future = asyncio.run_coroutine_threadsafe(coro, _get_memory_update_loop())
-        return future.result()
+        return future.result(timeout=100) # 100 seconds, consistent with typical LLM timeouts
     except Exception:
         if future is None:
             close = getattr(coro, "close", None)
