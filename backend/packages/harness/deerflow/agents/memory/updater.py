@@ -1,6 +1,7 @@
 """Memory updater for reading, writing, and updating memory data."""
 
 import asyncio
+import copy
 import json
 import logging
 import math
@@ -386,7 +387,9 @@ class MemoryUpdater:
             response_text = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
 
         update_data = json.loads(response_text)
-        updated_memory = self._apply_updates(current_memory, update_data, thread_id)
+        # Deep-copy before in-place mutation so a subsequent save() failure
+        # cannot corrupt the still-cached original object reference.
+        updated_memory = self._apply_updates(copy.deepcopy(current_memory), update_data, thread_id)
         updated_memory = _strip_upload_mentions_from_memory(updated_memory)
         return get_memory_storage().save(updated_memory, agent_name)
 
