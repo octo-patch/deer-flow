@@ -26,8 +26,9 @@ def load(skill_name: str):
 class FakeResp:
     """Minimal stand-in for requests.Response."""
 
-    def __init__(self, json_data=None, content=b"", status_code=200):
+    def __init__(self, json_data=None, content=b"", status_code=200, lines=None):
         self._json = json_data if json_data is not None else {}
+        self._lines = lines or []
         self.content = content
         self.status_code = status_code
 
@@ -37,3 +38,7 @@ class FakeResp:
 
     def json(self):
         return self._json
+
+    def iter_lines(self):
+        """Replay a streamed body line by line, as requests does."""
+        yield from self._lines
