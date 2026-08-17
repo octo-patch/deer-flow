@@ -9,7 +9,7 @@ description: Use this skill when the user requests to generate, create, compose,
 
 This skill generates songs (vocal or instrumental) from a structured JSON spec using the
 MiniMax music generation API (`/v1/music_generation`). You describe the style/mood/scene in
-`prompt`, optionally provide `lyrics`, and the script returns an MP3.
+`prompt`, optionally provide `lyrics`, and the script writes the generated audio file.
 
 ## Workflow
 
@@ -36,11 +36,26 @@ Fields:
 - `lyrics` (optional): song lyrics. Use `\n` between lines and structure tags such as
   `[Intro]`, `[Verse]`, `[Pre Chorus]`, `[Chorus]`, `[Bridge]`, `[Outro]`.
 - `is_instrumental` (optional, bool): set `true` for a pure instrumental track (no lyrics needed).
+- `output_format` (optional): `hex` (default) or `url`. With `url` the script downloads the
+  link for you, because the link expires 24 hours after generation.
+- `stream` (optional, bool): stream the audio back in chunks. Streaming only supports
+  `output_format: "hex"`.
+- `audio_setting` (optional, object): `sample_rate`, `bitrate`, and `format`. `format`
+  accepts `mp3` (default), `wav`, or `pcm` — match the `--output-file` extension to it.
+- `aigc_watermark` (optional, bool): append a watermark to the audio. Accepted only by the
+  China region and only for non-streaming requests.
 
 Behavior:
 - `lyrics` provided → those lyrics are sung.
 - `is_instrumental: true` → instrumental, no vocals.
 - neither → the model auto-writes lyrics from `prompt` (`lyrics_optimizer`).
+
+### Step 2b: Cover a Reference Track (optional)
+
+Set `MINIMAX_MUSIC_MODEL` to a cover model and add exactly one reference input to the spec:
+`audio_url`, `audio_base64`, or `cover_feature_id`. The reference audio must run 6 seconds
+to 6 minutes and stay under 50 MB. `lyrics` is optional — omit it and the lyrics are taken
+from the reference audio — except with `cover_feature_id`, where `lyrics` is required.
 
 ### Step 3: Execute Generation
 
@@ -52,7 +67,8 @@ python /mnt/skills/public/music-generation/scripts/generate.py \
 
 Parameters:
 - `--prompt-file`: Absolute path to the JSON spec (required).
-- `--output-file`: Absolute path for the output MP3 (required).
+- `--output-file`: Absolute path for the output audio file (required). Use an extension that
+  matches `audio_setting.format`.
 
 [!NOTE]
 Do NOT read the python file, just call it with the parameters.
@@ -60,13 +76,17 @@ Do NOT read the python file, just call it with the parameters.
 ## Environment
 
 - `MINIMAX_API_KEY` (required): your MiniMax interface key.
-- `MINIMAX_API_HOST` (optional): default `https://api.minimaxi.com`.
-- `MINIMAX_MUSIC_MODEL` (optional): default `music-2.6-free` (works for all API-key users);
-  paid/Token-Plan users can set `music-2.6` for higher limits.
+- `MINIMAX_MUSIC_REGION` (optional): `cn` (default, `https://api.minimaxi.com`) or
+  `global` (`https://api.minimax.io`).
+- `MINIMAX_API_HOST` (optional): overrides the regional host entirely.
+- `MINIMAX_MUSIC_MODEL` (optional): default `music-3.0`. Also accepts `music-2.6`, the
+  `music-3.0-free` / `music-2.6-free` variants that every API-key user can call, and the
+  `music-cover` / `music-cover-free` models for covering a reference track.
 
 ## Output Handling
 
-- Music is saved as MP3 (typically in `/mnt/user-data/outputs/`).
+- Music is saved in the `audio_setting.format` you asked for, MP3 by default (typically in
+  `/mnt/user-data/outputs/`).
 - Share the generated file with the user using the present_files tool.
 - Offer to iterate on style or lyrics if adjustments are needed.
 
