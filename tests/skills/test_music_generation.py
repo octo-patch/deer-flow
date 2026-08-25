@@ -37,7 +37,7 @@ def test_with_lyrics_payload_and_writes(monkeypatch, tmp_path):
     assert out.read_bytes() == b"songbytes"
     assert captured["url"].endswith("/v1/music_generation")
     assert captured["headers"]["Authorization"] == "Bearer m"
-    assert captured["json"]["model"] == "music-2.6-free"
+    assert captured["json"]["model"] == "music-3.0"
     assert captured["json"]["lyrics"] == "[verse]\nla la"
     assert captured["json"]["output_format"] == "hex"
     assert "Successfully generated music" in msg

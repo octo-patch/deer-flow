@@ -8,8 +8,9 @@ description: Use this skill when the user requests to generate, create, compose,
 ## Overview
 
 This skill generates songs (vocal or instrumental) from a structured JSON spec using the
-MiniMax music generation API (`/v1/music_generation`). You describe the style/mood/scene in
-`prompt`, optionally provide `lyrics`, and the script returns an MP3.
+MiniMax music generation API (`/v1/music_generation`). The current `music-3.0` contract
+supports global (`api.minimax.io`) and China (`api.minimaxi.com`) hosts, streaming or
+non-streaming responses, URL or encoded audio, and MP3/WAV/PCM output.
 
 ## Workflow
 
@@ -36,6 +37,12 @@ Fields:
 - `lyrics` (optional): song lyrics. Use `\n` between lines and structure tags such as
   `[Intro]`, `[Verse]`, `[Pre Chorus]`, `[Chorus]`, `[Bridge]`, `[Outro]`.
 - `is_instrumental` (optional, bool): set `true` for a pure instrumental track (no lyrics needed).
+- `stream` (optional, bool): request incremental generation events.
+- `output_format` (optional): `hex` (default), `base64`, or `url`.
+- `audio_setting` (optional): object such as `{"sample_rate":44100,"bitrate":256000,"format":"mp3"}`;
+  the format may be `mp3`, `wav`, or `pcm`.
+- `lyrics_optimizer` (optional, bool), `cover_feature_id` (optional), and `aigc_watermark`
+  (optional, for China-region requests) are passed through to the API.
 
 Behavior:
 - `lyrics` provided → those lyrics are sung.
@@ -60,9 +67,10 @@ Do NOT read the python file, just call it with the parameters.
 ## Environment
 
 - `MINIMAX_API_KEY` (required): your MiniMax interface key.
-- `MINIMAX_API_HOST` (optional): default `https://api.minimaxi.com`.
-- `MINIMAX_MUSIC_MODEL` (optional): default `music-2.6-free` (works for all API-key users);
-  paid/Token-Plan users can set `music-2.6` for higher limits.
+- `MINIMAX_API_HOST` (optional): default `https://api.minimax.io`; set it to
+  `https://api.minimaxi.com` for China-region requests.
+- `MINIMAX_MUSIC_MODEL` (optional): default `music-3.0`; `music-2.6` remains available when
+  supported by the account.
 
 ## Output Handling
 
